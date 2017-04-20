@@ -4,8 +4,9 @@
 #include <BME280I2C.h>
 
 
-const char* ssid     = "Stratum0";
-const char* password = "sie wissen schon";
+const char *ssid = "brrrrr";
+const char *password = "brrrrr";
+unsigned int pushcount = 0;
 char hostString[16] = {0};
 String topic;
 WiFiClient espClient;
@@ -98,5 +99,11 @@ void loop() {
     client.publish((topic + "/temperature").c_str(), String(temp).c_str());
     client.publish((topic + "/pressure").c_str(), String(pres).c_str());
     client.publish((topic + "/dew_point").c_str(), String(bme.dew(temp, hum, true)).c_str());
+    if(pushcount%6 == 0){
+    client.publish((topic + "/sys/RSSI").c_str(), String(WiFi.RSSI()).c_str());
+    client.publish((topic + "/sys/uptime").c_str(), String(pushcount*5).c_str());
+    client.publish((topic + "/sys/freeheap").c_str(), String(ESP.getFreeHeap()).c_str());
+    }
+    pushcount++;
   }
 }
