@@ -2,79 +2,121 @@
 #include <ESP8266mDNS.h>
 #include <PubSubClient.h>
 #include <BME280I2C.h>
+#include <Ticker.h>
 
+#define OSWATCH_RESET_TIME 30
+#define SC_DEBUG false
 
-const char *ssid = "brrrrr";
-const char *password = "brrrrr";
+const char *ssid = "brrrrrr";
+const char *password = "brrrrrr";
 unsigned int pushcount = 0;
 char hostString[16] = {0};
 String topic;
 WiFiClient espClient;
 PubSubClient client(espClient);
 BME280I2C bme(5, 5, 5, 1, 5, 2);
+Ticker tickerOSWatch;
+
 unsigned long lastmillis;
+
+static unsigned long last_loop;
+
+void ICACHE_RAM_ATTR osWatch(void) {
+    unsigned long t = millis();
+    unsigned long last_run = abs(t - last_loop);
+    if(last_run >= (OSWATCH_RESET_TIME * 1000)) {
+      // save the hit here to eeprom or to rtc memory if needed
+        ESP.restart();  // normal reboot 
+        //ESP.reset();  // hard reset
+    }
+}
 
 void setup() {
   lastmillis = millis();
+  last_loop = millis();
+  tickerOSWatch.attach_ms(((OSWATCH_RESET_TIME / 3) * 1000), osWatch);
   Serial.begin(115200);
-  delay(100);
+  delay(10);
+  #if SC_DEBUG
   Serial.println("\r\nsetup()");
+  #endif
   topic = "sensors/" + String(ESP.getChipId());
   sprintf(hostString, "ESP_%06X", ESP.getChipId());
+  #if SC_DEBUG
   Serial.print("Hostname: ");
   Serial.println(hostString);
+  #endif
   WiFi.hostname(hostString);
 
   WiFi.begin(ssid, password);
   unsigned long starttime = millis();
   while (WiFi.status() != WL_CONNECTED) {
     delay(250);
+    #if SC_DEBUG
     Serial.print(".");
-    if (millis() - starttime > 10000) {
+    #endif
+    unsigned long t = millis();
+    if (t - starttime > 10000) {
       ESP.restart();
     }
   }
+  last_loop = millis();
+  #if SC_DEBUG
   Serial.println("");
   Serial.print("Connected to ");
   Serial.println(ssid);
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
-
+  #endif
+  
   if (!MDNS.begin(hostString)) {
     Serial.println("Error setting up MDNS responder!");
   }
+  #if SC_DEBUG
   Serial.println("mDNS responder started");
+  #endif
   MDNS.addService("esp", "tcp", 8080);
-
+  #if SC_DEBUG
   Serial.println("Sending mDNS query");
+  #endif
   int n = MDNS.queryService("mqtt", "tcp");
+  #if SC_DEBUG
   Serial.println("mDNS query done");
+  #endif
+  last_loop = millis();
   if (n == 0) {
     Serial.println("no services found");
     ESP.restart();
   }
   else {
+    #if SC_DEBUG
     Serial.print(n);
     Serial.println(" service found ");
     Serial.print(MDNS.hostname(0));
     Serial.print(" (");
     Serial.print(MDNS.IP(0));
-    client.setServer(MDNS.IP(0), MDNS.port(0));
     Serial.print(":");
     Serial.print(MDNS.port(0));
     Serial.println(")");
+    #endif
+    client.setServer(MDNS.IP(0), MDNS.port(0));
+    
   }
 
-  while (!bme.begin()) {
+  if (!bme.begin()) {
     Serial.println("Could not find BME280I2C sensor!");
     ESP.restart();
   }
-  
+  last_loop = millis();
   while (!client.connected()) {
+    #if SC_DEBUG
     Serial.print("Attempting MQTT connection...");
+    #endif
     // Attempt to connect
     if (client.connect("ESP8266Client")) {
+      #if SC_DEBUG
       Serial.println("connected");
+      #endif
       client.publish((topic + "/humidity/unit").c_str(), "% RH", true);
       client.publish((topic + "/temperature/unit").c_str(), "°C", true);
       client.publish((topic + "/pressure/unit").c_str(), "Pa", true);
@@ -88,6 +130,8 @@ void setup() {
 }
 
 void loop() {
+  last_loop = millis();
+  client.loop();
   float temp(NAN), pres(NAN), hum(NAN);
   if (millis() > lastmillis + 5000) {
     lastmillis = millis();
