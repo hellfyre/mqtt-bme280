@@ -4,22 +4,29 @@
 #include <BME280I2C.h>
 #include <Ticker.h>
 
+//timeout of the loop watchdog
 #define OSWATCH_RESET_TIME 30
-#define SC_DEBUG false
+//interval in ms between publishes
+#define PUBLISH_INTERVAL 10000
+//enables sketch serial debug
+#define SC_DEBUG true
 
-const char *ssid = "brrrrrr";
-const char *password = "brrrrrr";
+//wifi ssid
+const char *ssid = "brrrrr";
+//wifi password
+const char *password = "brrrrr";
+
 unsigned int pushcount = 0;
 char hostString[16] = {0};
 String topic;
+const String node_name = "";
+unsigned long lastmillis;
+volatile unsigned long last_loop;
+
 WiFiClient espClient;
 PubSubClient client(espClient);
 BME280I2C bme(5, 5, 5, 1, 5, 2);
 Ticker tickerOSWatch;
-
-unsigned long lastmillis;
-
-static unsigned long last_loop;
 
 void ICACHE_RAM_ATTR osWatch(void) {
     unsigned long t = millis();
@@ -32,15 +39,29 @@ void ICACHE_RAM_ATTR osWatch(void) {
 }
 
 void setup() {
-  lastmillis = millis();
-  last_loop = millis();
+
+  //attach the interrupt for the software watchdog, this will restart the ESP if the code hangs for ~30 seconds
   tickerOSWatch.attach_ms(((OSWATCH_RESET_TIME / 3) * 1000), osWatch);
+  
   Serial.begin(115200);
   delay(10);
   #if SC_DEBUG
   Serial.println("\r\nsetup()");
   #endif
-  topic = "sensors/" + String(ESP.getChipId());
+
+  //initialize environmental sensor and restart if it fails
+  if (!bme.begin()) {
+    Serial.println("Could not find BME280I2C sensor!");
+    ESP.restart();
+  }
+
+  //setup the hostname and topic based on the ESP's chip-id
+  if(node_name.length()>0){
+    topic = "sensors/" + node_name;  
+  } else {
+    topic = "sensors/" + String(ESP.getChipId());  
+  }
+  
   sprintf(hostString, "ESP_%06X", ESP.getChipId());
   #if SC_DEBUG
   Serial.print("Hostname: ");
@@ -48,6 +69,7 @@ void setup() {
   #endif
   WiFi.hostname(hostString);
 
+  //connect to the defined WiFi network, this might fail, but we give it about 10 seconds
   WiFi.begin(ssid, password);
   unsigned long starttime = millis();
   while (WiFi.status() != WL_CONNECTED) {
@@ -68,7 +90,8 @@ void setup() {
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
   #endif
-  
+
+  //start up the mDNS service and announce our presence (nice to have for debugging purposes)
   if (!MDNS.begin(hostString)) {
     Serial.println("Error setting up MDNS responder!");
   }
@@ -76,6 +99,8 @@ void setup() {
   Serial.println("mDNS responder started");
   #endif
   MDNS.addService("esp", "tcp", 8080);
+
+  //query for an announced mqtt serice on the network
   #if SC_DEBUG
   Serial.println("Sending mDNS query");
   #endif
@@ -84,6 +109,8 @@ void setup() {
   Serial.println("mDNS query done");
   #endif
   last_loop = millis();
+
+  //if a service has been found connect to it (this will always connect to the first responding)
   if (n == 0) {
     Serial.println("no services found");
     ESP.restart();
@@ -102,20 +129,17 @@ void setup() {
     client.setServer(MDNS.IP(0), MDNS.port(0));
     
   }
-
-  if (!bme.begin()) {
-    Serial.println("Could not find BME280I2C sensor!");
-    ESP.restart();
-  }
   last_loop = millis();
+
+  //setup the mqtt client and connect it to the server
   while (!client.connected()) {
     #if SC_DEBUG
     Serial.print("Attempting MQTT connection...");
     #endif
     // Attempt to connect
-    if (client.connect("ESP8266Client")) {
+    if (client.connect("Sensor " + ESP.getChipId())) {
       #if SC_DEBUG
-      Serial.println("connected");
+      Serial.print("connected");
       #endif
       client.publish((topic + "/humidity/unit").c_str(), "% RH", true);
       client.publish((topic + "/temperature/unit").c_str(), "°C", true);
@@ -127,27 +151,43 @@ void setup() {
       ESP.restart();
     }
   }
+  lastmillis = millis() + PUBLISH_INTERVAL +1;
+  last_loop = millis();
 }
 
 void loop() {
   last_loop = millis();
   client.loop();
+  
   float temp(NAN), pres(NAN), hum(NAN);
-  if (millis() > lastmillis + 5000) {
+  if (last_loop > lastmillis + PUBLISH_INTERVAL) {
     lastmillis = millis();
     if (!client.connected() || WiFi.status() != WL_CONNECTED) {
+      Serial.println("For some reason we disconnected!");
+      Serial.println("WiFi status: " + WiFi.status());
+      Serial.println("MQTT status: " + client.state());
       ESP.restart();
     }
     bme.read(pres, temp, hum, true, 0x00);
+    temp = temp - 0.15;
     client.publish((topic + "/humidity").c_str(), String(hum).c_str());
     client.publish((topic + "/temperature").c_str(), String(temp).c_str());
+    delay(50);
     client.publish((topic + "/pressure").c_str(), String(pres).c_str());
     client.publish((topic + "/dew_point").c_str(), String(bme.dew(temp, hum, true)).c_str());
+    delay(50);
     if(pushcount%6 == 0){
     client.publish((topic + "/sys/RSSI").c_str(), String(WiFi.RSSI()).c_str());
     client.publish((topic + "/sys/uptime").c_str(), String(pushcount*5).c_str());
     client.publish((topic + "/sys/freeheap").c_str(), String(ESP.getFreeHeap()).c_str());
+    #if SC_DEBUG
+    Serial.print("\nAll is well");
+    #endif
     }
+    #if SC_DEBUG
+    Serial.print(".");
+    #endif
     pushcount++;
   }
+  delay(50);
 }
