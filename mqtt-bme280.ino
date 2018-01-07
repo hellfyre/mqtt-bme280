@@ -2,30 +2,45 @@
 #include <ESP8266mDNS.h>
 #include <PubSubClient.h>
 #include <BME280I2C.h>
+#include <EnvironmentCalculations.h>
 #include <Ticker.h>
+#include <Wire.h>
 
 //timeout of the loop watchdog
 #define OSWATCH_RESET_TIME 30
 //interval in ms between publishes
 #define PUBLISH_INTERVAL 10000
 //enables sketch serial debug
-#define SC_DEBUG true
+#define SC_DEBUG false
 
-//wifi ssid
+// wifi ssid
 const char *ssid = "brrrrr";
-//wifi password
+// wifi password
 const char *password = "brrrrr";
+// node name
+const String node_name = "";
 
 unsigned int pushcount = 0;
 char hostString[16] = {0};
 String topic;
-const String node_name = "";
 unsigned long lastmillis;
 volatile unsigned long last_loop;
 
 WiFiClient espClient;
 PubSubClient client(espClient);
-BME280I2C bme(5, 5, 5, 1, 5, 2);
+
+BME280I2C::Settings settings(
+   BME280::OSR_X16,
+   BME280::OSR_X16,
+   BME280::OSR_X16,
+   BME280::Mode_Forced,
+   BME280::StandbyTime_1000ms,
+   BME280::Filter_8,
+   BME280::SpiEnable_False,
+   0x76 // I2C address. I2C specific.
+);
+BME280I2C bme(settings);
+
 Ticker tickerOSWatch;
 
 void ICACHE_RAM_ATTR osWatch(void) {
@@ -48,6 +63,7 @@ void setup() {
   #if SC_DEBUG
   Serial.println("\r\nsetup()");
   #endif
+  Wire.begin();
 
   //initialize environmental sensor and restart if it fails
   if (!bme.begin()) {
@@ -67,7 +83,16 @@ void setup() {
   Serial.print("Hostname: ");
   Serial.println(hostString);
   #endif
+  WiFi.persistent(false);
+  WiFi.mode(WIFI_STA);
   WiFi.hostname(hostString);
+
+  #if SC_DEBUG
+  byte mac[6];
+  WiFi.macAddress(mac);
+  Serial.printf("\r\nConnecting to %s\r\n", ssid);
+  Serial.printf("MAC: %x:%x:%x:%x:%x:%x\r\n", mac[5], mac[4], mac[3], mac[2], mac[1], mac[0]);
+  #endif
 
   //connect to the defined WiFi network, this might fail, but we give it about 10 seconds
   WiFi.begin(ssid, password);
@@ -137,7 +162,8 @@ void setup() {
     Serial.print("Attempting MQTT connection...");
     #endif
     // Attempt to connect
-    if (client.connect("Sensor " + ESP.getChipId())) {
+    //if (client.connect("sensor_" + ESP.getChipId())) {
+    if (client.connect(node_name.c_str())) {
       #if SC_DEBUG
       Serial.print("connected");
       #endif
@@ -168,20 +194,20 @@ void loop() {
       Serial.println("MQTT status: " + client.state());
       ESP.restart();
     }
-    bme.read(pres, temp, hum, true, 0x00);
+    bme.read(pres, temp, hum, BME280::TempUnit_Celsius, BME280::PresUnit_hPa);
     temp = temp - 0.15;
     client.publish((topic + "/humidity").c_str(), String(hum).c_str());
     client.publish((topic + "/temperature").c_str(), String(temp).c_str());
     delay(50);
     client.publish((topic + "/pressure").c_str(), String(pres).c_str());
-    client.publish((topic + "/dew_point").c_str(), String(bme.dew(temp, hum, true)).c_str());
+    client.publish((topic + "/dew_point").c_str(), String(EnvironmentCalculations::DewPoint(temp, hum, BME280::TempUnit_Celsius)).c_str());
     delay(50);
     if(pushcount%6 == 0){
     client.publish((topic + "/sys/RSSI").c_str(), String(WiFi.RSSI()).c_str());
     client.publish((topic + "/sys/uptime").c_str(), String(pushcount*5).c_str());
     client.publish((topic + "/sys/freeheap").c_str(), String(ESP.getFreeHeap()).c_str());
     #if SC_DEBUG
-    Serial.print("\nAll is well");
+    Serial.print("\r\nAll is well");
     #endif
     }
     #if SC_DEBUG
