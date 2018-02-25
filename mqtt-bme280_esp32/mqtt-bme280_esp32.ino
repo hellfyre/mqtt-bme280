@@ -1,5 +1,6 @@
 #include <BME280I2C.h>
 #include <EnvironmentCalculations.h>
+#include <esp_log.h>
 #include <esp_task_wdt.h>
 #include <ESPmDNS.h>
 #include <PubSubClient.h>
@@ -12,7 +13,8 @@
  * Configuration
  *********************************************/
 
-#define DEBUG_OUTPUT true
+#define LOG_LOCAL_LEVEL ESP_LOG_DEBUG /* Levels: ESP_LOG_{NONE, ERROR, WARN, INFO, DEBUG, VERBOSE} */
+static const char* TAG = "BME280";
 
 // How long to sleep between MQTT publishes in seconds
 #define TIME_TO_SLEEP 60
@@ -45,13 +47,60 @@ BME280I2C bme(settings);
 String topic = String("sensors/");
 char chipid[13];
 
+String translate_mqtt_status(uint8_t status) {
+    switch (status) {
+        case MQTT_CONNECTION_TIMEOUT:
+            return String("Connection timeout");
+        case MQTT_CONNECTION_LOST:
+            return String("Connection lost");
+        case MQTT_CONNECT_FAILED:
+            return String("Connect failed");
+        case MQTT_DISCONNECTED:
+            return String("Disconnected");
+        case MQTT_CONNECTED:
+            return String("Connected");
+        case MQTT_CONNECT_BAD_PROTOCOL:
+            return String("Bad protocol");
+        case MQTT_CONNECT_BAD_CLIENT_ID:
+            return String("Bad client ID");
+        case MQTT_CONNECT_UNAVAILABLE:
+            return String("Unavailable");
+        case MQTT_CONNECT_BAD_CREDENTIALS:
+            return String("Bad credentials");
+        case MQTT_CONNECT_UNAUTHORIZED:
+            return String("Unauthorized");
+        default:
+            return String("Unknown error");
+    }
+}
+String translate_wifi_status(uint8_t status) {
+    switch (status) {
+        case WL_NO_SHIELD:
+            return String("No WiFi shield installed");
+        case WL_IDLE_STATUS:
+            return String("Idle");
+        case WL_NO_SSID_AVAIL:
+            return String("Available");
+        case WL_SCAN_COMPLETED:
+            return String("Scan completed");
+        case WL_CONNECTED:
+            return String("Connected");
+        case WL_CONNECT_FAILED:
+            return String("Connect failed");
+        case WL_CONNECTION_LOST:
+            return String("Connection lost");
+        case WL_DISCONNECTED:
+            return String("Disconnected");
+        default:
+            return String("Unknown error");
+    }
+}
+
 void start_i2c() {
     // Initialize I2C and environmental sensor BME280. Restart if the sensor fails.
     Wire.begin();
     if (!bme.begin()) {
-        #ifdef DEBUG_OUTPUT
-        Serial.println("Could not find BME280I2C sensor!");
-        #endif
+        ESP_EARLY_LOGE(TAG, "Could not find BME280I2C sensor!");
         ESP.restart();
     }
 }
@@ -65,23 +114,23 @@ void start_wifi(String host_name) {
     // Connect to the defined WiFi network, this might fail, but we give it about 10 seconds
     WiFi.begin(wifi_ssid, wifi_pass);
     unsigned long starttime = millis();
-    Serial.printf("Connecting to Wifi %s", wifi_ssid);
+    ESP_EARLY_LOGI(TAG, "Connecting to Wifi %s ...", wifi_ssid);
     while (WiFi.status() != WL_CONNECTED) {
         delay(250);
-        Serial.print(".");
+        ESP_EARLY_LOGD(TAG, ".");
         unsigned long t = millis();
         if (t - starttime > 10000) {
             ESP.restart();
         }
     }
-    Serial.println("\r\nConnected!");
+    ESP_EARLY_LOGI(TAG, " Connected!");
 }
 
 void start_mdns_service(String host_name) {
     // Initialize mDNS service
     esp_err_t err = mdns_init();
     if (err) {
-        Serial.printf("MDNS Init failed: %d\r\n", err);
+        ESP_EARLY_LOGE(TAG, "MDNS Init failed: %d", err);
         ESP.restart();
     }
 
@@ -97,24 +146,25 @@ void start_mdns_service(String host_name) {
 
 void search_mdns(uint32_t* ip_addr, uint16_t* port) {
     mdns_result_t * result = NULL;
-    uint16_t timeout = 1000;
+    uint16_t timeout = 2000;
 
-    while (!result && timeout <= 16000) {
-        Serial.printf("Trying to find MQTT service with timeout %d milliseconds\r\n", timeout);
+    while (!result && timeout <= 8000) {
+        ESP_EARLY_LOGI(TAG, "Trying to find MQTT service with timeout %d milliseconds", timeout);
         esp_err_t err = mdns_query_ptr("_mqtt", "_tcp", timeout, 20,  &result);
         if (err) {
-            Serial.println("Query Failed");
+            ESP_EARLY_LOGE(TAG, "MDNS query failed");
             ESP.restart();
         }
         timeout *= 2;
     }
     
     if(!result){
-        Serial.printf("No results found. Going back to sleep for %d seconds.\r\n", TIME_TO_SLEEP);
+        ESP_EARLY_LOGW(TAG, "No results found. Going back to sleep for %d seconds.", TIME_TO_SLEEP);
+        esp_task_wdt_delete(NULL);
         esp_deep_sleep_start();
     }
     else {
-        Serial.println("Found results.");
+        ESP_EARLY_LOGD(TAG, "Found results.");
     }
     
     mdns_ip_addr_t * address = NULL;
@@ -123,11 +173,12 @@ void search_mdns(uint32_t* ip_addr, uint16_t* port) {
             result = result->next;
         }
         else {
-            Serial.printf("Result set did not contain any IPV4 records. Going back to sleep for %d seconds.\r\n", TIME_TO_SLEEP);
+            ESP_EARLY_LOGW(TAG, "Result set did not contain any IPV4 records. Going back to sleep for %d seconds.", TIME_TO_SLEEP);
+            esp_task_wdt_delete(NULL);
             esp_deep_sleep_start();
         }
     }
-    Serial.println("IPV4 record found.");
+    ESP_EARLY_LOGD(TAG, "IPV4 record found.");
     
     address = result->addr;
     while (address->addr.type != MDNS_IP_PROTOCOL_V4) {
@@ -135,12 +186,13 @@ void search_mdns(uint32_t* ip_addr, uint16_t* port) {
             address = address->next;
         }
         else {
-            Serial.printf("Record did not contain any IPV4 addresses. Going back to sleep for %d seconds.\r\n", TIME_TO_SLEEP);
+            ESP_EARLY_LOGW(TAG, "Record did not contain any IPV4 addresses. Going back to sleep for %d seconds.", TIME_TO_SLEEP);
+            esp_task_wdt_delete(NULL);
             esp_deep_sleep_start();
         }
     }
     IPAddress ip_addr_obj = IPAddress(address->addr.u_addr.ip4.addr);
-    Serial.printf("IPV4 address found: %d.%d.%d.%d:%d\r\n", ip_addr_obj[0], ip_addr_obj[1], ip_addr_obj[2], ip_addr_obj[3], result->port);
+    ESP_EARLY_LOGI(TAG, "IPV4 address found: %d.%d.%d.%d:%d", ip_addr_obj[0], ip_addr_obj[1], ip_addr_obj[2], ip_addr_obj[3], result->port);
     *ip_addr = address->addr.u_addr.ip4.addr;
     *port = result->port;
 }
@@ -149,26 +201,33 @@ void start_mqtt(uint32_t ip_addr, uint16_t port, String host_name) {
     mqtt_client.setServer(ip_addr, port);
 
     // Set up the MQTT client and connect it to the server
-    Serial.print("Attempting to connect to MQTT server... ");
+    ESP_EARLY_LOGI(TAG, "Attempting to connect to MQTT server... ");
     while (!mqtt_client.connected()) {
         // Attempt to connect
         if (mqtt_client.connect(host_name.c_str())) {
-            Serial.print("connected!");
+            ESP_EARLY_LOGI(TAG, "connected!");
             mqtt_client.publish((topic + "/humidity/unit").c_str(), "% RH", true);
             mqtt_client.publish((topic + "/temperature/unit").c_str(), "°C", true);
             mqtt_client.publish((topic + "/pressure/unit").c_str(), "Pa", true);
             mqtt_client.publish((topic + "/dew_point/unit").c_str(), "°C", true);
         } else {
-            Serial.print("failed, rc=");
-            Serial.println(mqtt_client.state());
+            String error_msg = String(mqtt_client.state());
+            if (LOG_LOCAL_LEVEL > 0) {
+                error_msg = translate_mqtt_status(mqtt_client.state());
+            }
+            ESP_EARLY_LOGE(TAG, "Connection to MQTT server could not be established, rc=%s", error_msg);
             ESP.restart();
         }
     }
 }
 
 void setup() {
+    if (LOG_LOCAL_LEVEL == ESP_LOG_VERBOSE) {
+        // Be really verbose, i.e.: print log messages of all components
+        esp_log_level_set("*", LOG_LOCAL_LEVEL);
+    }
     // Start the watch dog
-    esp_task_wdt_init(60, true);
+    esp_task_wdt_init(10, true);
     esp_task_wdt_add(NULL);
     
     sprintf(chipid, "%X", ESP.getEfuseMac());
@@ -210,27 +269,30 @@ void setup() {
     // Set wakeup time
     esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
     
-    Serial.println("\r\nSetup done.\r\n\n");
+    ESP_EARLY_LOGD(TAG, "Setup done.\n");
 }
 
 void loop() {
-    Serial.println("Entering loop");
+    ESP_EARLY_LOGE(TAG, "Entering loop.");
     // Feed the watchdog
     esp_task_wdt_reset();
     mqtt_client.loop();
     float temp(NAN), pres(NAN), hum(NAN);
     
     if (!mqtt_client.connected() || WiFi.status() != WL_CONNECTED) {
-        Serial.println("For some reason we disconnected!");
-        Serial.println("WiFi status: " + WiFi.status());
-        Serial.println("MQTT status: " + mqtt_client.state());
-        ESP.restart(); //TODO: go to sleep instead?
+        ESP_EARLY_LOGE(TAG, "For some reason we got disconnected!");
+        ESP_EARLY_LOGE(TAG, "WiFi status: %s", translate_wifi_status(WiFi.status()));
+        ESP_EARLY_LOGE(TAG, "MQTT status: %s", translate_mqtt_status(mqtt_client.state()));
+        ESP_EARLY_LOGE(TAG, "Going back to sleep");
+        esp_task_wdt_delete(NULL);
+        esp_deep_sleep_start();
     }
     else {
-        Serial.println("Connected to MQTT server");
+        ESP_EARLY_LOGD(TAG, "Connected to MQTT server");
     }
 
     bme.read(pres, temp, hum, BME280::TempUnit_Celsius, BME280::PresUnit_hPa);
+    ESP_EARLY_LOGD(TAG, "Publishing data...");
     
     mqtt_client.publish((topic + "/humidity").c_str(), String(hum).c_str());
     mqtt_client.publish((topic + "/temperature").c_str(), String(temp).c_str());
@@ -240,7 +302,8 @@ void loop() {
     mqtt_client.publish((topic + "/dew_point").c_str(), String(EnvironmentCalculations::DewPoint(temp, hum, BME280::TempUnit_Celsius)).c_str());
     delay(50);  
     
-    // Go to sleep
-    Serial.printf("Going to sleep for %d seconds.\r\n", TIME_TO_SLEEP);
+    // Delete task watchdog and go to sleep
+    esp_task_wdt_delete(NULL);
+    ESP_EARLY_LOGI(TAG, "Going to sleep for %d seconds.", TIME_TO_SLEEP);
     esp_deep_sleep_start();
 }
