@@ -1,9 +1,10 @@
-#include <BME280I2C.h>
+#include <Adafruit_BME280.h>
 #include <EnvironmentCalculations.h>
 #include <esp_log.h>
 #include <esp_task_wdt.h>
 #include <ESPmDNS.h>
 #include <PubSubClient.h>
+#include <SPI.h>
 #include <WiFi.h>
 #include <Wire.h>
 
@@ -14,7 +15,15 @@
  *********************************************/
 
 #define LOG_LOCAL_LEVEL ESP_LOG_DEBUG /* Levels: ESP_LOG_{NONE, ERROR, WARN, INFO, DEBUG, VERBOSE} */
-static const char* TAG = "BME280";
+//static const char* TAG = "arbeitszimmer";
+//static const char* TAG = "abstellkammer";
+//static const char* TAG = "badezimmer";
+static const char* TAG = "kueche";
+//static const char* TAG = "schlafzimmer";
+//static const char* TAG = "wohnzimmer";
+
+// This node's name
+const String node_name = TAG;
 
 // How long to sleep between MQTT publishes in seconds
 #define TIME_TO_SLEEP 60
@@ -23,31 +32,18 @@ static const char* TAG = "BME280";
 const char *wifi_ssid = "somewifi";
 const char *wifi_pass = "secret";
 
-// This node's name
-const String node_name = "node1";
-
 WiFiClient wifi_client;
 PubSubClient mqtt_client(wifi_client);
 
-// The BME280 sensor configuration
-BME280I2C::Settings settings(
-    BME280::OSR_X16,
-    BME280::OSR_X16,
-    BME280::OSR_X16,
-    BME280::Mode_Forced,
-    BME280::StandbyTime_1000ms,
-    BME280::Filter_8,
-    BME280::SpiEnable_False,
-    0x76 // I2C address. I2C specific.
-);
-BME280I2C bme(settings);
-
-/*********************************************/
+Adafruit_BME280 bme; // use I2C interface
+Adafruit_Sensor *bme_temp = bme.getTemperatureSensor();
+Adafruit_Sensor *bme_pressure = bme.getPressureSensor();
+Adafruit_Sensor *bme_humidity = bme.getHumiditySensor();
 
 String topic = String("sensors/");
 char chipid[13];
 
-String translate_mqtt_status(uint8_t status) {
+String translate_mqtt_status(int status) {
     switch (status) {
         case MQTT_CONNECTION_TIMEOUT:
             return String("Connection timeout");
@@ -73,7 +69,7 @@ String translate_mqtt_status(uint8_t status) {
             return String("Unknown error");
     }
 }
-String translate_wifi_status(uint8_t status) {
+String translate_wifi_status(int status) {
     switch (status) {
         case WL_NO_SHIELD:
             return String("No WiFi shield installed");
@@ -99,10 +95,18 @@ String translate_wifi_status(uint8_t status) {
 void start_i2c() {
     // Initialize I2C and environmental sensor BME280. Restart if the sensor fails.
     Wire.begin();
-    if (!bme.begin()) {
+    if (!bme.begin(0x76, &Wire)) {
         ESP_EARLY_LOGE(TAG, "Could not find BME280I2C sensor!");
         ESP.restart();
     }
+
+    bme.setSampling(
+        Adafruit_BME280::MODE_FORCED,
+        Adafruit_BME280::SAMPLING_X1, // temperature
+        Adafruit_BME280::SAMPLING_X1, // pressure
+        Adafruit_BME280::SAMPLING_X1, // humidity
+        Adafruit_BME280::FILTER_OFF
+    );
 }
 
 void start_wifi(String host_name) {
@@ -110,8 +114,8 @@ void start_wifi(String host_name) {
     WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
     WiFi.setHostname(host_name.c_str());
-    
-    // Connect to the defined WiFi network, this might fail, but we give it about 10 seconds
+
+    // Connect to the defined WiFi network. This might fail, we give it about 10 seconds
     WiFi.begin(wifi_ssid, wifi_pass);
     unsigned long starttime = millis();
     ESP_EARLY_LOGI(TAG, "Connecting to Wifi %s ...", wifi_ssid);
@@ -120,7 +124,9 @@ void start_wifi(String host_name) {
         ESP_EARLY_LOGD(TAG, ".");
         unsigned long t = millis();
         if (t - starttime > 10000) {
-            ESP.restart();
+            ESP_EARLY_LOGW(TAG, "Could not connect to WiFi. Going back to sleep for %d seconds.", TIME_TO_SLEEP);
+            esp_task_wdt_delete(NULL);
+            esp_deep_sleep_start();
         }
     }
     ESP_EARLY_LOGI(TAG, " Connected!");
@@ -136,7 +142,7 @@ void start_mdns_service(String host_name) {
 
     // Set hostname
     mdns_hostname_set(host_name.c_str());
-    
+
     // Set default instance
     mdns_instance_name_set("BME280 node");
 
@@ -149,6 +155,7 @@ void search_mdns(uint32_t* ip_addr, uint16_t* port) {
     uint16_t timeout = 2000;
 
     while (!result && timeout <= 8000) {
+        esp_task_wdt_reset();
         ESP_EARLY_LOGI(TAG, "Trying to find MQTT service with timeout %d milliseconds", timeout);
         esp_err_t err = mdns_query_ptr("_mqtt", "_tcp", timeout, 20,  &result);
         if (err) {
@@ -157,7 +164,7 @@ void search_mdns(uint32_t* ip_addr, uint16_t* port) {
         }
         timeout *= 2;
     }
-    
+
     if(!result){
         ESP_EARLY_LOGW(TAG, "No results found. Going back to sleep for %d seconds.", TIME_TO_SLEEP);
         esp_task_wdt_delete(NULL);
@@ -166,7 +173,7 @@ void search_mdns(uint32_t* ip_addr, uint16_t* port) {
     else {
         ESP_EARLY_LOGD(TAG, "Found results.");
     }
-    
+
     mdns_ip_addr_t * address = NULL;
     while (result->ip_protocol != MDNS_IP_PROTOCOL_V4) {
         if (result->next) {
@@ -179,7 +186,7 @@ void search_mdns(uint32_t* ip_addr, uint16_t* port) {
         }
     }
     ESP_EARLY_LOGD(TAG, "IPV4 record found.");
-    
+
     address = result->addr;
     while (address->addr.type != MDNS_IP_PROTOCOL_V4) {
         if (address->next) {
@@ -208,15 +215,12 @@ void start_mqtt(uint32_t ip_addr, uint16_t port, String host_name) {
             ESP_EARLY_LOGI(TAG, "connected!");
             mqtt_client.publish((topic + "/humidity/unit").c_str(), "% RH", true);
             mqtt_client.publish((topic + "/temperature/unit").c_str(), "°C", true);
-            mqtt_client.publish((topic + "/pressure/unit").c_str(), "Pa", true);
-            mqtt_client.publish((topic + "/dew_point/unit").c_str(), "°C", true);
+            mqtt_client.publish((topic + "/pressure/unit").c_str(), "hPa", true);
         } else {
-            String error_msg = String(mqtt_client.state());
-            if (LOG_LOCAL_LEVEL > 0) {
-                error_msg = translate_mqtt_status(mqtt_client.state());
-            }
-            ESP_EARLY_LOGE(TAG, "Connection to MQTT server could not be established, rc=%s", error_msg);
-            ESP.restart();
+            String error_msg = translate_mqtt_status(mqtt_client.state());
+            ESP_EARLY_LOGE(TAG, "Connection to MQTT server could not be established, rc=%s, Going back to sleep for %d seconds.", error_msg.c_str(), TIME_TO_SLEEP);
+            esp_task_wdt_delete(NULL);
+            esp_deep_sleep_start();
         }
     }
 }
@@ -229,29 +233,32 @@ void setup() {
     // Start the watch dog
     esp_task_wdt_init(10, true);
     esp_task_wdt_add(NULL);
-    
+
     sprintf(chipid, "%X", ESP.getEfuseMac());
     Serial.begin(115200);
-    
+
     // Set up the topic based on the node name
     String host_name = node_name;
     if (node_name.length() == 0) {
         host_name = String("esp-") + String(chipid);
     }
     topic += host_name;
-    
+
     delay(10);
     // Feed the watchdog
     esp_task_wdt_reset();
-    
+
+    // Set wakeup time
+    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+
     start_i2c();
     // Feed the watchdog
     esp_task_wdt_reset();
-    
+
     start_wifi(host_name);
     // Feed the watchdog
     esp_task_wdt_reset();
-    
+
     start_mdns_service(host_name);
     // Feed the watchdog
     esp_task_wdt_reset();
@@ -261,14 +268,11 @@ void setup() {
     search_mdns(&ip_addr, &port);
     // Feed the watchdog
     esp_task_wdt_reset();
-    
+
     start_mqtt(ip_addr, port, host_name);
     // Feed the watchdog
     esp_task_wdt_reset();
-    
-    // Set wakeup time
-    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
-    
+
     ESP_EARLY_LOGD(TAG, "Setup done.\n");
 }
 
@@ -277,12 +281,11 @@ void loop() {
     // Feed the watchdog
     esp_task_wdt_reset();
     mqtt_client.loop();
-    float temp(NAN), pres(NAN), hum(NAN);
-    
+
     if (!mqtt_client.connected() || WiFi.status() != WL_CONNECTED) {
         ESP_EARLY_LOGE(TAG, "For some reason we got disconnected!");
-        ESP_EARLY_LOGE(TAG, "WiFi status: %s", translate_wifi_status(WiFi.status()));
-        ESP_EARLY_LOGE(TAG, "MQTT status: %s", translate_mqtt_status(mqtt_client.state()));
+        ESP_EARLY_LOGE(TAG, "WiFi status: %s", translate_wifi_status(WiFi.status()).c_str());
+        ESP_EARLY_LOGE(TAG, "MQTT status: %s", translate_mqtt_status(mqtt_client.state()).c_str());
         ESP_EARLY_LOGE(TAG, "Going back to sleep");
         esp_task_wdt_delete(NULL);
         esp_deep_sleep_start();
@@ -291,17 +294,17 @@ void loop() {
         ESP_EARLY_LOGD(TAG, "Connected to MQTT server");
     }
 
-    bme.read(pres, temp, hum, BME280::TempUnit_Celsius, BME280::PresUnit_hPa);
+    sensors_event_t temperature_event, pressure_event, humidity_event;
+    bme_temp->getEvent(&temperature_event);
+    bme_pressure->getEvent(&pressure_event);
+    bme_humidity->getEvent(&humidity_event);
     ESP_EARLY_LOGD(TAG, "Publishing data...");
-    
-    mqtt_client.publish((topic + "/humidity").c_str(), String(hum).c_str());
-    mqtt_client.publish((topic + "/temperature").c_str(), String(temp).c_str());
+
+    mqtt_client.publish((topic + "/humidity").c_str(), String(humidity_event.relative_humidity).c_str());
+    mqtt_client.publish((topic + "/temperature").c_str(), String(temperature_event.temperature).c_str());
+    mqtt_client.publish((topic + "/pressure").c_str(), String(pressure_event.pressure).c_str());
     delay(50);
-    
-    mqtt_client.publish((topic + "/pressure").c_str(), String(pres).c_str());
-    mqtt_client.publish((topic + "/dew_point").c_str(), String(EnvironmentCalculations::DewPoint(temp, hum, BME280::TempUnit_Celsius)).c_str());
-    delay(50);  
-    
+
     // Delete task watchdog and go to sleep
     esp_task_wdt_delete(NULL);
     ESP_EARLY_LOGI(TAG, "Going to sleep for %d seconds.", TIME_TO_SLEEP);
