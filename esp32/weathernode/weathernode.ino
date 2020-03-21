@@ -48,6 +48,8 @@ void setup() {
     sprintf(chipid, "%X", ESP.getEfuseMac());
     Serial.begin(115200);
 
+    load_preferences();
+
     // Set up the topic based on the node name
     String host_name = node_name;
     if (node_name.length() == 0) {

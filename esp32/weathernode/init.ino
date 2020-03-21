@@ -1,12 +1,15 @@
 // WiFi data
-const char *wifi_ssid;
-const char *wifi_pass;
+String wifi_ssid;
+String wifi_pass;
 
 void load_preferences() {
     preferences.begin("prefs", true);
     node_name = preferences.getString("node_name", "unknown_node");
-    wifi_ssid = preferences.getString("wifi_ssid", "wifi").c_str();
-    wifi_pass = preferences.getString("wifi_pass", "secret").c_str();
+    wifi_ssid = preferences.getString("wifi_ssid", "wifi");
+    wifi_pass = preferences.getString("wifi_pass", "secret");
+    preferences.end();
+
+    ESP_EARLY_LOGI(TAG, "I am node %s", node_name.c_str());
 }
 
 void start_i2c() {
@@ -33,9 +36,9 @@ void start_wifi(String host_name) {
     WiFi.setHostname(host_name.c_str());
 
     // Connect to the defined WiFi network. This might fail, we give it about 10 seconds
-    WiFi.begin(wifi_ssid, wifi_pass);
+    WiFi.begin(wifi_ssid.c_str(), wifi_pass.c_str());
     unsigned long starttime = millis();
-    ESP_EARLY_LOGI(TAG, "Connecting to Wifi %s ...", wifi_ssid);
+    ESP_EARLY_LOGI(TAG, "Connecting to Wifi %s ...", wifi_ssid.c_str());
     while (WiFi.status() != WL_CONNECTED) {
         delay(250);
         ESP_EARLY_LOGD(TAG, ".");
