@@ -9,7 +9,7 @@ void load_preferences() {
     wifi_pass = preferences.getString("wifi_pass", "secret");
     preferences.end();
 
-    ESP_EARLY_LOGI(TAG, "I am node %s", node_name.c_str());
+    ESP_EARLY_LOGI(TAG, "I am node \"%s\"", node_name.c_str());
 }
 
 void start_i2c() {
@@ -22,10 +22,10 @@ void start_i2c() {
 
     bme.setSampling(
         Adafruit_BME280::MODE_FORCED,
-        Adafruit_BME280::SAMPLING_X1, // temperature
-        Adafruit_BME280::SAMPLING_X1, // pressure
-        Adafruit_BME280::SAMPLING_X1, // humidity
-        Adafruit_BME280::FILTER_OFF
+        Adafruit_BME280::SAMPLING_X2, // temperature
+        Adafruit_BME280::SAMPLING_X4, // pressure
+        Adafruit_BME280::SAMPLING_X2, // humidity
+        Adafruit_BME280::FILTER_X2
     );
 }
 
