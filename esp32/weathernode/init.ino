@@ -49,7 +49,7 @@ void start_wifi(String host_name) {
             esp_deep_sleep_start();
         }
     }
-    ESP_EARLY_LOGI(TAG, " Connected!");
+    ESP_EARLY_LOGI(TAG, "Connected!");
 }
 
 void start_mdns_service(String host_name) {
@@ -85,7 +85,7 @@ void search_mdns(uint32_t* ip_addr, uint16_t* port) {
         timeout *= 2;
     }
 
-    if(!result){
+    if (!result) {
         ESP_EARLY_LOGW(TAG, "No results found. Going back to sleep for %d seconds.", TIME_TO_SLEEP);
         esp_task_wdt_delete(NULL);
         esp_deep_sleep_start();
@@ -132,7 +132,7 @@ void start_mqtt(uint32_t ip_addr, uint16_t port, String host_name) {
     while (!mqtt_client.connected()) {
         // Attempt to connect
         if (mqtt_client.connect(host_name.c_str())) {
-            ESP_EARLY_LOGI(TAG, "connected!");
+            ESP_EARLY_LOGI(TAG, "Connected!");
             mqtt_client.publish((topic + "/humidity/unit").c_str(), "% RH", true);
             mqtt_client.publish((topic + "/temperature/unit").c_str(), "°C", true);
             mqtt_client.publish((topic + "/pressure/unit").c_str(), "hPa", true);
