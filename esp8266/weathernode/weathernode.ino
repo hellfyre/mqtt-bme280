@@ -28,7 +28,7 @@ WiFiClient wifi_client;
 PubSubClient mqtt_client(wifi_client);
 String node_name;
 String host_name;
-String topic = String("sensors/");
+String topic = "sensors/";
 
 void setup() {
     Serial.begin(115200);
@@ -79,9 +79,22 @@ void loop() {
     log_info("Publishing data...");
 
     ESP.wdtFeed();
-    mqtt_client.publish((topic + "/humidity").c_str(), String(humidity_event.relative_humidity).c_str());
-    mqtt_client.publish((topic + "/temperature").c_str(), String(temperature_event.temperature).c_str());
-    mqtt_client.publish((topic + "/pressure").c_str(), String(pressure_event.pressure).c_str());
+    // This is a very dirty hack to concatenate two strings. Apparently
+    // there is a bug in String::concat() that the nullbyte of the left
+    // operand is not removed upon concatenation. I'm using snprintf(),
+    // because I'm too lazy to report or fix the problem in String::concat().
+    char humidity_topic[64];
+    char temperature_topic[64];
+    char pressure_topic[64];
+    memset(humidity_topic, '\0', 64);
+    memset(temperature_topic, '\0', 64);
+    memset(pressure_topic, '\0', 64);
+    snprintf(humidity_topic, 64, "%s/%s", topic.c_str(), "humidity");
+    snprintf(temperature_topic, 64, "%s/%s", topic.c_str(), "temperature");
+    snprintf(pressure_topic, 64, "%s/%s", topic.c_str(), "pressure");
+    mqtt_client.publish(humidity_topic, String(humidity_event.relative_humidity).c_str());
+    mqtt_client.publish(temperature_topic, String(temperature_event.temperature).c_str());
+    mqtt_client.publish(pressure_topic, String(pressure_event.pressure).c_str());
     delay(50);
 
     // Go to sleep

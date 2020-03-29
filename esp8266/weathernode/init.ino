@@ -131,9 +131,22 @@ void start_mqtt(uint32_t ip_addr, uint16_t port, String host_name) {
         // Attempt to connect
         if (mqtt_client.connect(host_name.c_str())) {
             log_info("Connected");
-            mqtt_client.publish((topic + "/humidity/unit").c_str(), "% RH", true);
-            mqtt_client.publish((topic + "/temperature/unit").c_str(), "°C", true);
-            mqtt_client.publish((topic + "/pressure/unit").c_str(), "hPa", true);
+            // This is a very dirty hack to concatenate two strings. Apparently
+            // there is a bug in String::concat() that the nullbyte of the left
+            // operand is not removed upon concatenation. I'm using snprintf(),
+            // because I'm too lazy to report or fix the problem in String::concat().
+            char humidity_topic[64];
+            char temperature_topic[64];
+            char pressure_topic[64];
+            memset(humidity_topic, '\0', 64);
+            memset(temperature_topic, '\0', 64);
+            memset(pressure_topic, '\0', 64);
+            snprintf(humidity_topic, 64, "%s/%s/%s", topic.c_str(), "humidity", "unit");
+            snprintf(temperature_topic, 64, "%s/%s/%s", topic.c_str(), "temperature", "unit");
+            snprintf(pressure_topic, 64, "%s/%s/%s", topic.c_str(), "pressure", "unit");
+            mqtt_client.publish(humidity_topic, "% RH", true);
+            mqtt_client.publish(temperature_topic, "°C", true);
+            mqtt_client.publish(pressure_topic, "hPa", true);
         } else {
             String error_msg = translate_mqtt_status(mqtt_client.state());
             log_error("Connection to MQTT server could not be established, rc = " + error_msg + ", retrying in " + String(TIME_TO_SLEEP) + " seconds.");
