@@ -23,9 +23,6 @@ static const char* TAG = "weathernode";
 #define TIME_TO_SLEEP 60
 
 Adafruit_BME280 bme; // use I2C interface
-Adafruit_Sensor *bme_temp = bme.getTemperatureSensor();
-Adafruit_Sensor *bme_pressure = bme.getPressureSensor();
-Adafruit_Sensor *bme_humidity = bme.getHumiditySensor();
 
 // Global variables
 WiFiClient wifi_client;
@@ -97,15 +94,12 @@ void loop() {
         ESP_EARLY_LOGD(TAG, "Connected to MQTT server");
     }
 
-    sensors_event_t temperature_event, pressure_event, humidity_event;
-    bme_temp->getEvent(&temperature_event);
-    bme_pressure->getEvent(&pressure_event);
-    bme_humidity->getEvent(&humidity_event);
     ESP_EARLY_LOGI(TAG, "Publishing data...");
-
-    mqtt_client.publish((topic + "/humidity").c_str(), String(humidity_event.relative_humidity).c_str());
-    mqtt_client.publish((topic + "/temperature").c_str(), String(temperature_event.temperature).c_str());
-    mqtt_client.publish((topic + "/pressure").c_str(), String(pressure_event.pressure).c_str());
+    esp_task_wdt_reset();
+    bme.takeForcedMeasurement();
+    mqtt_client.publish((topic + "/humidity").c_str(), String(bme.readHumidity()).c_str());
+    mqtt_client.publish((topic + "/temperature").c_str(), String(bme.readTemperature()).c_str());
+    mqtt_client.publish((topic + "/pressure").c_str(), String(bme.readPressure()/100).c_str());
     delay(50);
 
     // Delete task watchdog and go to sleep

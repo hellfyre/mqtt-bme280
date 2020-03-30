@@ -19,9 +19,6 @@
 #define TIME_TO_SLEEP 60
 
 Adafruit_BME280 bme; // use I2C interface
-Adafruit_Sensor *bme_temp = bme.getTemperatureSensor();
-Adafruit_Sensor *bme_pressure = bme.getPressureSensor();
-Adafruit_Sensor *bme_humidity = bme.getHumiditySensor();
 
 // Global variables
 WiFiClient wifi_client;
@@ -72,13 +69,9 @@ void loop() {
         log_debug("Connected to MQTT server");
     }
 
-    sensors_event_t temperature_event, pressure_event, humidity_event;
-    bme_temp->getEvent(&temperature_event);
-    bme_pressure->getEvent(&pressure_event);
-    bme_humidity->getEvent(&humidity_event);
     log_info("Publishing data...");
-
     ESP.wdtFeed();
+    bme.takeForcedMeasurement();
     // This is a very dirty hack to concatenate two strings. Apparently
     // there is a bug in String::concat() that the nullbyte of the left
     // operand is not removed upon concatenation. I'm using snprintf(),
@@ -92,9 +85,9 @@ void loop() {
     snprintf(humidity_topic, 64, "%s/%s", topic.c_str(), "humidity");
     snprintf(temperature_topic, 64, "%s/%s", topic.c_str(), "temperature");
     snprintf(pressure_topic, 64, "%s/%s", topic.c_str(), "pressure");
-    mqtt_client.publish(humidity_topic, String(humidity_event.relative_humidity).c_str());
-    mqtt_client.publish(temperature_topic, String(temperature_event.temperature).c_str());
-    mqtt_client.publish(pressure_topic, String(pressure_event.pressure).c_str());
+    mqtt_client.publish(humidity_topic, String(bme.readHumidity()).c_str());
+    mqtt_client.publish(temperature_topic, String(bme.readTemperature()).c_str());
+    mqtt_client.publish(pressure_topic, String(bme.readPressure()/100).c_str());
     delay(50);
 
     // Go to sleep
