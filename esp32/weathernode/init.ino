@@ -136,6 +136,7 @@ void start_mqtt(uint32_t ip_addr, uint16_t port, String host_name) {
             mqtt_client.publish((topic + "/humidity/unit").c_str(), "% RH", true);
             mqtt_client.publish((topic + "/temperature/unit").c_str(), "°C", true);
             mqtt_client.publish((topic + "/pressure/unit").c_str(), "hPa", true);
+            mqtt_client.publish((topic + "/battery/unit").c_str(), "V", true);
         } else {
             String error_msg = translate_mqtt_status(mqtt_client.state());
             ESP_EARLY_LOGE(TAG, "Connection to MQTT server could not be established, rc=%s, Going back to sleep for %d seconds.", error_msg.c_str(), TIME_TO_SLEEP);

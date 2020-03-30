@@ -9,6 +9,8 @@
 #include <WiFi.h>
 #include <Wire.h>
 
+extern "C" int rom_phy_get_vdd33();
+
 #define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
 
 /*********************************************
@@ -100,6 +102,7 @@ void loop() {
     mqtt_client.publish((topic + "/humidity").c_str(), String(bme.readHumidity()).c_str());
     mqtt_client.publish((topic + "/temperature").c_str(), String(bme.readTemperature()).c_str());
     mqtt_client.publish((topic + "/pressure").c_str(), String(bme.readPressure()/100).c_str());
+    mqtt_client.publish((topic + "/battery").c_str(), String(rom_phy_get_vdd33()/1000.0).c_str());
     delay(50);
 
     // Delete task watchdog and go to sleep
