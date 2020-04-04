@@ -12,6 +12,15 @@ void load_preferences() {
     ESP_EARLY_LOGI(TAG, "I am node \"%s\"", node_name.c_str());
 }
 
+float read_battery_voltage() {
+    float voltage = 0;
+    btStart();
+    voltage = ((float) rom_phy_get_vdd33()) / 1000.0;
+    btStop();
+
+    return voltage;
+}
+
 void start_i2c() {
     // Initialize I2C and environmental sensor BME280. Restart if the sensor fails.
     Wire.begin();

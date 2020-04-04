@@ -32,6 +32,7 @@ Preferences preferences;
 PubSubClient mqtt_client(wifi_client);
 String node_name;
 String topic = String("sensors/");
+float voltage = 0;
 
 void setup() {
     // Start the watch dog
@@ -45,6 +46,8 @@ void setup() {
     // Set up the topic based on the node name
     String host_name = node_name;
     topic += host_name;
+
+    voltage = read_battery_voltage();
 
     delay(10);
     // Feed the watchdog
@@ -102,9 +105,10 @@ void loop() {
     mqtt_client.publish((topic + "/humidity").c_str(), String(bme.readHumidity()).c_str());
     mqtt_client.publish((topic + "/temperature").c_str(), String(bme.readTemperature()).c_str());
     mqtt_client.publish((topic + "/pressure").c_str(), String(bme.readPressure()/100).c_str());
-    mqtt_client.publish((topic + "/battery").c_str(), String(rom_phy_get_vdd33()/1000.0).c_str());
+    mqtt_client.publish((topic + "/battery").c_str(), String(voltage).c_str());
     delay(50);
 
+    WiFi.disconnect();
     // Delete task watchdog and go to sleep
     esp_task_wdt_delete(NULL);
     ESP_EARLY_LOGI(TAG, "Going to sleep for %d seconds.", TIME_TO_SLEEP);
