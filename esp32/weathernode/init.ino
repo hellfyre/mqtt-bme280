@@ -3,6 +3,7 @@ String wifi_ssid;
 String wifi_pass;
 
 void load_preferences() {
+    // node_name, wifi_ssid and wifi_pass are global
     preferences.begin("prefs", true);
     node_name = preferences.getString("node_name", "unknown_node");
     wifi_ssid = preferences.getString("wifi_ssid", "wifi");
@@ -21,13 +22,32 @@ float read_battery_voltage() {
     return voltage;
 }
 
-void start_i2c() {
+void publish_data(float voltage) {
+    // bme is global
+    ESP_EARLY_LOGI(TAG, "Publishing data...");
+    mqtt_client.publish((topic + "/humidity").c_str(), String(bme.readHumidity()).c_str());
+    mqtt_client.publish((topic + "/temperature").c_str(), String(bme.readTemperature()).c_str());
+    mqtt_client.publish((topic + "/pressure").c_str(), String(bme.readPressure() / 100).c_str());
+    mqtt_client.publish((topic + "/battery").c_str(), String(voltage).c_str());
+    delay(50);
+}
+
+void initialize_bme() {
     // Initialize I2C and environmental sensor BME280. Restart if the sensor fails.
     Wire.begin();
-    if (!bme.begin(0x76, &Wire)) {
-        ESP_EARLY_LOGE(TAG, "Could not find BME280I2C sensor!");
+    uint16_t counter = 3;
+    bool bme_found = false;
+    while (counter > 0 && !(bme_found = bme.begin(0x76, &Wire))) {
+        ESP_EARLY_LOGE(TAG, "Could not find BME280I2C sensor, retrying ...");
+        counter--;
+        delay(10);
+    }
+
+    if (!bme_found) {
+        ESP_EARLY_LOGE(TAG, "Could not find BME280I2C sensor, restarting ...");
         ESP.restart();
     }
+    ESP_EARLY_LOGD(TAG, "Found BME280I2C sensor");
 
     bme.setSampling(
         Adafruit_BME280::MODE_FORCED,
@@ -49,7 +69,8 @@ void start_wifi(String host_name) {
     unsigned long starttime = millis();
     ESP_EARLY_LOGI(TAG, "Connecting to Wifi %s ...", wifi_ssid.c_str());
     while (WiFi.status() != WL_CONNECTED) {
-        delay(250);
+        esp_task_wdt_reset();
+        delay(500);
         ESP_EARLY_LOGD(TAG, ".");
         unsigned long t = millis();
         if (t - starttime > 10000) {
@@ -79,7 +100,7 @@ void start_mdns_service(String host_name) {
     mdns_service_add(NULL, "_esp", "_tcp", 8080, NULL, 0);
 }
 
-void search_mdns(uint32_t* ip_addr, uint16_t* port) {
+void search_mdns(uint32_t& ip_addr, uint16_t& port) {
     mdns_result_t * result = NULL;
     uint16_t timeout = 2000;
 
@@ -127,10 +148,15 @@ void search_mdns(uint32_t* ip_addr, uint16_t* port) {
             esp_deep_sleep_start();
         }
     }
-    IPAddress ip_addr_obj = IPAddress(address->addr.u_addr.ip4.addr);
-    ESP_EARLY_LOGI(TAG, "IPV4 address found: %d.%d.%d.%d:%d", ip_addr_obj[0], ip_addr_obj[1], ip_addr_obj[2], ip_addr_obj[3], result->port);
-    *ip_addr = address->addr.u_addr.ip4.addr;
-    *port = result->port;
+
+    if (LOG_LOCAL_LEVEL == ESP_LOG_DEBUG) {
+        // Convert uint32_t IP address to IPAddress object for logging purposes
+        IPAddress ip_addr_obj = IPAddress(address->addr.u_addr.ip4.addr);
+        ESP_EARLY_LOGI(TAG, "IPV4 address found: %d.%d.%d.%d:%d", ip_addr_obj[0], ip_addr_obj[1], ip_addr_obj[2], ip_addr_obj[3], result->port);
+    }
+
+    ip_addr = address->addr.u_addr.ip4.addr;
+    port = result->port;
 }
 
 void start_mqtt(uint32_t ip_addr, uint16_t port, String host_name) {
@@ -142,6 +168,8 @@ void start_mqtt(uint32_t ip_addr, uint16_t port, String host_name) {
         // Attempt to connect
         if (mqtt_client.connect(host_name.c_str())) {
             ESP_EARLY_LOGI(TAG, "Connected!");
+
+            // Publish units under persistent topics
             mqtt_client.publish((topic + "/humidity/unit").c_str(), "% RH", true);
             mqtt_client.publish((topic + "/temperature/unit").c_str(), "°C", true);
             mqtt_client.publish((topic + "/pressure/unit").c_str(), "hPa", true);

@@ -32,7 +32,6 @@ Preferences preferences;
 PubSubClient mqtt_client(wifi_client);
 String node_name;
 String topic = String("sensors/");
-float voltage = 0;
 
 void setup() {
     // Start the watch dog
@@ -40,75 +39,37 @@ void setup() {
     esp_task_wdt_add(NULL);
 
     Serial.begin(115200);
-
     load_preferences();
 
     // Set up the topic based on the node name
-    String host_name = node_name;
-    topic += host_name;
-
-    voltage = read_battery_voltage();
-
+    topic += node_name;
     delay(10);
-    // Feed the watchdog
-    esp_task_wdt_reset();
 
     // Set wakeup time
     esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
 
-    start_i2c();
-    // Feed the watchdog
-    esp_task_wdt_reset();
-
-    start_wifi(host_name);
-    // Feed the watchdog
-    esp_task_wdt_reset();
-
-    start_mdns_service(host_name);
-    // Feed the watchdog
-    esp_task_wdt_reset();
-
-    uint32_t ip_addr;
-    uint16_t port;
-    search_mdns(&ip_addr, &port);
-    // Feed the watchdog
-    esp_task_wdt_reset();
-
-    start_mqtt(ip_addr, port, host_name);
-    // Feed the watchdog
-    esp_task_wdt_reset();
+    initialize_bme();
 
     ESP_EARLY_LOGD(TAG, "Setup done.\n");
 }
 
 void loop() {
-    ESP_EARLY_LOGI(TAG, "Entering loop.");
-    // Feed the watchdog
-    esp_task_wdt_reset();
-    mqtt_client.loop();
+    ESP_EARLY_LOGD(TAG, "Entering loop.");
 
-    if (!mqtt_client.connected() || WiFi.status() != WL_CONNECTED) {
-        ESP_EARLY_LOGE(TAG, "For some reason we got disconnected!");
-        ESP_EARLY_LOGE(TAG, "WiFi status: %s", translate_wifi_status(WiFi.status()).c_str());
-        ESP_EARLY_LOGE(TAG, "MQTT status: %s", translate_mqtt_status(mqtt_client.state()).c_str());
-        ESP_EARLY_LOGE(TAG, "Going back to sleep");
-        esp_task_wdt_delete(NULL);
-        esp_deep_sleep_start();
-    }
-    else {
-        ESP_EARLY_LOGD(TAG, "Connected to MQTT server");
-    }
-
-    ESP_EARLY_LOGI(TAG, "Publishing data...");
-    esp_task_wdt_reset();
+    // Take measurements; measure voltage before enabling WiFi
+    float voltage = read_battery_voltage();
     bme.takeForcedMeasurement();
-    mqtt_client.publish((topic + "/humidity").c_str(), String(bme.readHumidity()).c_str());
-    mqtt_client.publish((topic + "/temperature").c_str(), String(bme.readTemperature()).c_str());
-    mqtt_client.publish((topic + "/pressure").c_str(), String(bme.readPressure()/100).c_str());
-    mqtt_client.publish((topic + "/battery").c_str(), String(voltage).c_str());
-    delay(50);
 
+    uint32_t ip_addr;
+    uint16_t port;
+
+    start_wifi(node_name);
+    start_mdns_service(node_name);
+    search_mdns(ip_addr, port);
+    start_mqtt(ip_addr, port, node_name);
+    publish_data(voltage);
     WiFi.disconnect();
+
     // Delete task watchdog and go to sleep
     esp_task_wdt_delete(NULL);
     ESP_EARLY_LOGI(TAG, "Going to sleep for %d seconds.", TIME_TO_SLEEP);
