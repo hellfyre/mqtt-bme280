@@ -60,8 +60,7 @@ void initialize_bme() {
 
 void start_wifi(String host_name) {
     // Set up WiFi
-    WiFi.persistent(false);
-    WiFi.mode(WIFI_STA);
+    WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE);
     WiFi.setHostname(host_name.c_str());
 
     // Connect to the defined WiFi network. This might fail, we give it about 10 seconds
