@@ -35,10 +35,10 @@ void start_i2c() {
 
     bme.setSampling(
         Adafruit_BME280::MODE_FORCED,
-        Adafruit_BME280::SAMPLING_X2, // temperature
-        Adafruit_BME280::SAMPLING_X4, // pressure
-        Adafruit_BME280::SAMPLING_X2, // humidity
-        Adafruit_BME280::FILTER_X2
+        Adafruit_BME280::SAMPLING_X8, // temperature
+        Adafruit_BME280::SAMPLING_X8, // pressure
+        Adafruit_BME280::SAMPLING_X8, // humidity
+        Adafruit_BME280::FILTER_X4
     );
 }
 
